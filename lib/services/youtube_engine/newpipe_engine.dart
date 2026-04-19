@@ -8,7 +8,11 @@ import 'package:http_parser/http_parser.dart';
 class NewPipeEngine implements YouTubeEngine {
   static bool get isAvailableForPlatform => kIsAndroid || kIsDesktop;
 
-  AudioOnlyStreamInfo _parseAudioStream(AudioStream stream, String videoId) {
+  AudioOnlyStreamInfo? _parseAudioStream(AudioStream stream, String videoId) {
+    // mediaFormat is null for some streams (age-restricted, live, certain
+    // regional content). Force-unwrapping it crashes the app on those tracks.
+    if (stream.mediaFormat == null) return null;
+
     return AudioOnlyStreamInfo(
       VideoId(videoId),
       stream.itag,
@@ -51,7 +55,15 @@ class NewPipeEngine implements YouTubeEngine {
   }
 
   Video _parseVideoResult(VideoSearchResultItem info) {
-    final id = Uri.parse(info.url).queryParameters["v"]!;
+    // YouTube Shorts and some other results use /shorts/ID URLs instead of
+    // the standard watch?v=ID format. Force-unwrapping queryParameters["v"]
+    // crashes on those results.
+    final uri = Uri.parse(info.url);
+    final id = uri.queryParameters["v"] ??
+        uri.pathSegments.lastWhere(
+          (s) => s.isNotEmpty,
+          orElse: () => info.url,
+        );
     return Video(
       VideoId(id),
       info.name,
@@ -73,8 +85,9 @@ class NewPipeEngine implements YouTubeEngine {
   Future<StreamManifest> getStreamManifest(String videoId) async {
     final video = await NewPipeExtractor.getVideoInfo(videoId);
 
-    final streams =
-        video.audioStreams.map((stream) => _parseAudioStream(stream, videoId));
+    final streams = video.audioStreams
+        .map((stream) => _parseAudioStream(stream, videoId))
+        .whereType<AudioOnlyStreamInfo>();
 
     return StreamManifest(streams);
   }
@@ -90,8 +103,9 @@ class NewPipeEngine implements YouTubeEngine {
   Future<(Video, StreamManifest)> getVideoWithStreamInfo(String videoId) async {
     final video = await NewPipeExtractor.getVideoInfo(videoId);
 
-    final streams =
-        video.audioStreams.map((stream) => _parseAudioStream(stream, videoId));
+    final streams = video.audioStreams
+        .map((stream) => _parseAudioStream(stream, videoId))
+        .whereType<AudioOnlyStreamInfo>();
 
     return (_parseVideo(video), StreamManifest(streams));
   }
